@@ -63,7 +63,7 @@ AnyEvent::Socket::tcp_server undef, 3000, sub {
 
                 my $res = $hs_req->new_response->to_http_response;
 
-                $hdl->push_write('HTTP/1.1 ' . $res->as_string);
+                $hdl->push_write('HTTP/1.1 ' . $res->as_string("\r\n"));
 
                 $handshake_written++;
             }
