@@ -14,9 +14,8 @@ sub new {
     my $self = {};
     bless $self, $class;
 
-    $self->{key}    = $params{key};
-    $self->{origin} = $params{origin};
-    $self->{host}   = $params{host};
+    $self->{key}  = $params{key};
+    $self->{host} = $params{host};
 
     $self->{method}   = $params{method}   || 'GET';
     $self->{resource} = $params{resource} || '/';
@@ -38,7 +37,6 @@ sub from_params {
           upgrade
           connection
           sec-websocket-key
-          origin
           sec-websocket-version
           /;
     }
@@ -49,7 +47,6 @@ sub from_params {
     split /\s*,\s*/, $headers{connection};
 
     return unless $headers{'host'};
-    return unless $headers{'origin'};
     return unless $headers{'sec-websocket-key'};
     return unless $headers{'sec-websocket-version'};
 
@@ -117,8 +114,6 @@ sub to_params {
       unless first { lc($_) eq 'connection' } @{$self->{headers}};
     push @{$self->{headers}}, 'Host' => $self->{host}
       unless first { lc($_) eq 'host' } @{$self->{headers}};
-    push @{$self->{headers}}, 'Origin' => $self->{origin}
-      unless first { lc($_) eq 'origin' } @{$self->{headers}};
     push @{$self->{headers}}, 'Sec-WebSocket-Key' => $key
       unless first { lc($_) eq 'sec-websocket-key' } @{$self->{headers}};
     push @{$self->{headers}}, 'Sec-WebSocket-Version' => 13

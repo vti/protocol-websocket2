@@ -9,7 +9,6 @@ subtest 'default values' => sub {
     my $req = _build_req(
         key      => 'foo',
         host     => 'localhost',
-        origin   => 'http://localhost',
         resource => '/'
     );
 
@@ -21,7 +20,6 @@ subtest 'default values' => sub {
             'Upgrade'               => 'WebSocket',
             'Connection'            => 'Upgrade',
             'Host'                  => 'localhost',
-            'Origin'                => 'http://localhost',
             'Sec-WebSocket-Key'     => 'foo',
             'Sec-WebSocket-Version' => 13,
         ]
