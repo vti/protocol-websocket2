@@ -15,7 +15,7 @@ subtest 'default values' => sub {
         headers => [
             'Upgrade'              => 'WebSocket',
             'Connection'           => 'Upgrade',
-            'Sec-WebSocket-Accept' => 'S0tLS0tLS0tLS0tLS0tLSw==',
+            'Sec-WebSocket-Accept' => 'vAxHsmERF4QGxY5H81SGLgxeESE=',
         ]
       };
 };
@@ -28,7 +28,7 @@ subtest 'from params' => sub {
         headers => [
             upgrade                => 'websocket',
             connection             => 'Upgrade',
-            'Sec-WebSocket-Accept' => 'S0tLS0tLS0tLS0tLS0tLSw==',
+            'Sec-WebSocket-Accept' => 'vAxHsmERF4QGxY5H81SGLgxeESE=',
         ]
     );
 };
@@ -59,7 +59,7 @@ subtest 'round' => sub {
         headers => [
             upgrade                => 'websocket',
             connection             => 'keep-alive, Upgrade',
-            'Sec-WebSocket-Accept' => 'S0tLS0tLS0tLS0tLS0tLSw==',
+            'Sec-WebSocket-Accept' => 'vAxHsmERF4QGxY5H81SGLgxeESE=',
         ]
     );
 
@@ -70,7 +70,7 @@ subtest 'round' => sub {
         headers => [
             'upgrade'              => 'websocket',
             'connection'           => 'keep-alive, Upgrade',
-            'Sec-WebSocket-Accept' => 'S0tLS0tLS0tLS0tLS0tLSw==',
+            'Sec-WebSocket-Accept' => 'vAxHsmERF4QGxY5H81SGLgxeESE=',
         ]
       };
 };

@@ -96,8 +96,8 @@ sub _generate_accept {
 
     my $accept = $key;
     $accept .= '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';    # WTF
-    $accept = Digest::SHA::sha1($key);
-    $accept = MIME::Base64::encode_base64($key);
+    $accept = Digest::SHA::sha1($accept);
+    $accept = MIME::Base64::encode_base64($accept);
     $accept =~ s{\s+}{}g;
 
     return $accept;
