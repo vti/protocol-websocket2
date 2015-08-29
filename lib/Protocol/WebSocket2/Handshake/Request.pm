@@ -41,7 +41,7 @@ sub _init {
     $self->{url} = URI->new($self->{url}) unless blessed $self->{url};
 
     croak 'url does not look like a websocket url'
-      unless $self->{url}->scheme && $self->{url}->scheme eq 'ws';
+      unless $self->{url}->scheme && $self->{url}->scheme =~ m/^wss?$/;
 
     my $resource = $self->{url}->path_query;
     $resource = '/' unless $resource =~ m{^/};

@@ -40,6 +40,15 @@ subtest 'accepts url as a string' => sub {
     is $req->resource, '/';
 };
 
+subtest 'accepts secure url as a string' => sub {
+    my $req = _req()->new(
+        key => 'foo',
+        url => 'wss://localhost',
+    );
+
+    is $req->resource, '/';
+};
+
 subtest 'throws on invalid url' => sub {
     like exception {
         _req()->new(
