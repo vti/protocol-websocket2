@@ -7,42 +7,28 @@ use File::Basename qw(dirname);
 
 BEGIN { unshift @INC, dirname(__FILE__) . '/../lib' }
 
+use URI;
 use AnyEvent::Socket;
 use AnyEvent::Handle;
 
-use HTTP::Parser;
-use HTTP::Response;
-use URI::ws;
-
-use Protocol::WebSocket2::Handshake::Request;
-use Protocol::WebSocket2::FrameBuffer;
-use Protocol::WebSocket2::Frame;
+use Protocol::WebSocket2::Client;
 
 my ($address) = @ARGV;
 die 'Usage: <address>' unless $address;
-
-my $url = URI->new($address);
 
 my $cv = AnyEvent->condvar;
 
 my $hdl;
 
+my $url = URI->new($address);
 AnyEvent::Socket::tcp_connect $url->host, $url->port, sub {
     my ($fh) = @_ or die $!;
 
     warn "Connected to server\n";
 
+    my $client = Protocol::WebSocket2::Client->new(url => $url);
+
     $hdl = AnyEvent::Handle->new(fh => $fh);
-
-    my $hs_req = Protocol::WebSocket2::Handshake::Request->new(url => $url);
-
-    $hdl->push_write($hs_req->to_string);
-
-    my $parser = HTTP::Parser->new(response => 1);
-    my $frame_buffer = Protocol::WebSocket2::FrameBuffer->new;
-
-    my $handshake_read;
-
     $hdl->on_read(
         sub {
             my $hdl = shift;
@@ -50,64 +36,46 @@ AnyEvent::Socket::tcp_connect $url->host, $url->port, sub {
             my $chunk = $hdl->{rbuf};
             $hdl->{rbuf} = undef;
 
-            if ($handshake_read) {
-                $frame_buffer->append($chunk);
-
-                while (my $frame = $frame_buffer->next_frame) {
-                    if ($frame->is_close) {
-                        warn "< EOF\n";
-
-                        warn "Disconnect from server\n";
-
-                        $hdl->destroy;
-
-                        $cv->send;
-                    }
-                    else {
-                        my $payload = $frame->payload;
-
-                        warn "< $payload\n";
-
-                        warn "> EOF\n";
-
-                        my $frame = Protocol::WebSocket2::Frame->new(
-                            masked  => 1,
-                            type => 'close'
-                        );
-
-                        $hdl->push_write($frame->to_bytes);
-
-                        last;
-                    }
-                }
-
-                return;
-            }
-
-            my $status = $parser->add($chunk);
-
-            if ($status == 0) {
-                my $res = $parser->request;
-
-                Protocol::WebSocket2::Handshake::Response->from_http_response(
-                    $res, key => $hs_req->key);
-
-                warn "Handshake done\n";
-                $handshake_read++;
-
-                my $payload = 'Hello';
-
-                warn "> $payload\n";
-
-                my $frame = Protocol::WebSocket2::Frame->new(
-                    masked  => 1,
-                    payload => $payload
-                );
-
-                $hdl->push_write($frame->to_bytes);
-            }
+            $client->parse($chunk);
         }
     );
+
+    $client->write_cb(sub { $hdl->push_write($_[0]) });
+
+    $client->on_handshake(
+        sub {
+            warn "Handshake done\n";
+
+            my $payload = 'Hello';
+
+            warn "> $payload\n";
+
+            $client->send_message($payload);
+        }
+    );
+    $client->on_message(
+        sub {
+            my ($payload) = @_;
+
+            warn "< $payload\n";
+
+            warn "> EOF\n";
+            $client->send_frame(type => 'close');
+        }
+    );
+    $client->on_close(
+        sub {
+            warn "< EOF\n";
+
+            warn "Disconnect from server\n";
+
+            $hdl->destroy;
+
+            $cv->send;
+        }
+    );
+
+    $client->handshake;
 };
 
 $cv->wait;
