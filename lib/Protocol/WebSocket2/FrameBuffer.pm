@@ -5,9 +5,14 @@ use warnings;
 
 use Config;
 use Protocol::WebSocket2::Frame;
+use Protocol::WebSocket2::Util qw(dispatch_legacy is_legacy);
+use Protocol::WebSocket2::FrameBuffer::hixie_75;
 
 sub new {
     my $class = shift;
+    my (%params) = @_;
+
+    return dispatch_legacy(@_) if is_legacy($params{version});
 
     my $self = {};
     bless $self, $class;
@@ -155,6 +160,12 @@ sub next_frame {
     }
 
     return;
+}
+
+sub size {
+    my $self = shift;
+
+    return length $self->{buffer};
 }
 
 sub _mask {

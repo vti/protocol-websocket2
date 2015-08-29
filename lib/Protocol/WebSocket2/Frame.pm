@@ -17,9 +17,14 @@ our %TYPES = (
     close        => 0x08
 );
 
+use Protocol::WebSocket2::Util qw(is_legacy dispatch_legacy);
+use Protocol::WebSocket2::Frame::hixie_75;
+
 sub new {
     my $class = shift;
     my (%params) = @_;
+
+    return dispatch_legacy(@_) if is_legacy($params{version});
 
     my $self = {};
     bless $self, $class;

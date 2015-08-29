@@ -3,75 +3,156 @@ package Protocol::WebSocket2::Handshake::Request;
 use strict;
 use warnings;
 
+use Carp qw(croak);
 use MIME::Base64 ();
+use URI;
+use Scalar::Util qw(blessed);
 use List::Util qw(first);
 use Protocol::WebSocket2::Handshake::Response;
+use Protocol::WebSocket2::Handshake::Request::hixie_75;
+use Protocol::WebSocket2::Util
+  qw(header_get header_get_lc dispatch_legacy is_legacy);
 
 sub new {
     my $class = shift;
     my (%params) = @_;
 
+    return dispatch_legacy(@_) if is_legacy($params{version});
+
     my $self = {};
     bless $self, $class;
 
-    $self->{key}  = $params{key};
-    $self->{host} = $params{host};
+    $self->{version} = $params{version} || 'rfc6455';
 
-    $self->{method}   = $params{method}   || 'GET';
-    $self->{resource} = $params{resource} || '/';
-    $self->{headers} = [@{$params{headers} || []}];
+    $self->_init(%params);
 
     return $self;
 }
 
-sub from_params {
+sub _init {
     my $self = shift;
     my (%params) = @_;
 
+    $self->{key} = $params{key} || $self->_generate_key;
+
+    croak 'url required' unless $params{url};
+
+    $self->{url} = $params{url};
+    $self->{url} = URI->new($self->{url}) unless blessed $self->{url};
+
+    croak 'url does not look like a websocket url'
+      unless $self->{url}->scheme && $self->{url}->scheme eq 'ws';
+
+    my $resource = $self->{url}->path_query;
+    $resource = '/' unless $resource =~ m{^/};
+    $self->{resource} = $resource;
+
+    my $host = $self->{url}->host_port;
+    $host =~ s{:80$}{};
+
+    $self->{method} = 'GET';
+
     $self->{headers} = [@{$params{headers} || []}];
 
-    my %headers;
-    while (my ($key, $value) = splice(@{$params{headers}}, 0, 2)) {
-        $headers{lc($key)} = $value if first { lc($key) eq $_ } qw/
-          host
-          upgrade
-          connection
-          sec-websocket-key
-          sec-websocket-version
-          /;
+    if (!@{$self->{headers}}) {
+        push @{$self->{headers}}, 'Upgrade'    => 'WebSocket';
+        push @{$self->{headers}}, 'Connection' => 'Upgrade';
+        push @{$self->{headers}}, 'Host'       => $host;
+        push @{$self->{headers}}, $self->_default_headers;
     }
 
-    return unless $headers{upgrade} && lc($headers{upgrade}) eq 'websocket';
-    return
-      unless $headers{connection} && first { lc($_) eq 'upgrade' }
-    split /\s*,\s*/, $headers{connection};
-
-    return unless $headers{'host'};
-    return unless $headers{'sec-websocket-key'};
-    return unless $headers{'sec-websocket-version'};
-
-    $self->{key} = $headers{'sec-websocket-key'};
+    if (!header_get $self->{headers}, 'Host') {
+        push @{$self->{headers}}, Host => $host;
+    }
 
     return $self;
 }
 
-sub from_http_request {
+sub _default_headers {
     my $self = shift;
+
+    return ('Sec-WebSocket-Key' => $self->{key}, 'Sec-WebSocket-Version' => 13);
+}
+
+sub version  { $_[0]->{version} }
+sub method   { $_[0]->{method} }
+sub url      { $_[0]->{url} }
+sub resource { $_[0]->{resource} }
+sub headers  { $_[0]->{headers} }
+sub key      { $_[0]->{key} }
+
+sub from_params {
+    my $class = shift;
+    my (%params) = @_;
+
+    if ($params{method} && uc($params{method}) ne 'GET') {
+        croak 'invalid method';
+    }
+
+    my $url = $class->_build_url_from_params(%params);
+
+    my $headers = [@{$params{headers} || []}];
+
+    croak 'Upgrade header missing or invalid'
+      unless header_get_lc($headers, 'Upgrade') eq 'websocket';
+    croak 'Connection header missing or invalid'
+      unless first { lc($_) eq 'upgrade' } split /\s*,\s*/,
+      header_get($headers, 'Connection');
+
+    croak 'Sec-WebSocket-Key header missing'
+      unless header_get $headers, 'Sec-WebSocket-Key';
+    croak 'Sec-WebSocket-Version header missing or invalid'
+      unless header_get($headers, 'Sec-WebSocket-Version') eq '13';
+
+    my $key = header_get $headers, 'Sec-WebSocket-Key';
+    croak 'Sec-WebSocket-Key required'
+      unless $key;
+
+    return $class->new(key => $key, url => $url, headers => $headers);
+}
+
+sub _build_url_from_params {
+    my $self = shift;
+    my (%params) = @_;
+
+    my $url = $params{url};
+    if (!$url) {
+        croak 'Resource missing' unless $params{resource};
+
+        my $headers = [@{$params{headers} || []}];
+
+        croak 'Host header missing'
+          unless my $host = header_get $headers, 'Host';
+
+        $url = URI->new("ws://$host$params{resource}");
+    }
+
+    return $url;
+}
+
+sub from_http_request {
+    my $class = shift;
     my ($req) = @_;
 
     my @headers =
       map { $_ => $req->headers->header($_) } $req->headers->header_field_names;
 
-    return $self->from_params(
-        method   => $req->method,
-        resource => $req->uri->path,
-        headers  => \@headers,
-        body     => $req->content
+    my $url = $req->uri;
+    if (!$url->scheme) {
+        $url->scheme('ws');
+        $url->host_port($req->headers->header('Host'));
+    }
+
+    return $class->from_params(
+        key => ($req->headers->header('Sec-WebSocket-Key') // ''),
+        method  => $req->method,
+        url     => $url,
+        headers => \@headers,
     );
 }
 
 sub from_psgi {
-    my $self = shift;
+    my $class = shift;
     my ($env) = @_;
 
     my $resource = "$env->{SCRIPT_NAME}$env->{PATH_INFO}"
@@ -86,7 +167,7 @@ sub from_psgi {
         push @headers, lc $canonical => $env->{$header_name};
     }
 
-    return $self->from_params(
+    return $class->from_params(
         method   => $env->{REQUEST_METHOD},
         resource => $resource,
         headers  => \@headers,
@@ -96,40 +177,50 @@ sub from_psgi {
 sub to_params {
     my $self = shift;
 
-    my $key = $self->{key};
-
-    if (!$key) {
-        $key = '';
-        $key .= chr(int(rand(256))) for 1 .. 16;
-
-        $key = MIME::Base64::encode_base64($key);
-        $key =~ s{\s+}{}g;
-
-        $self->{key} = $key;
-    }
-
-    push @{$self->{headers}}, 'Upgrade' => 'WebSocket'
-      unless first { lc($_) eq 'upgrade' } @{$self->{headers}};
-    push @{$self->{headers}}, 'Connection' => 'Upgrade'
-      unless first { lc($_) eq 'connection' } @{$self->{headers}};
-    push @{$self->{headers}}, 'Host' => $self->{host}
-      unless first { lc($_) eq 'host' } @{$self->{headers}};
-    push @{$self->{headers}}, 'Sec-WebSocket-Key' => $key
-      unless first { lc($_) eq 'sec-websocket-key' } @{$self->{headers}};
-    push @{$self->{headers}}, 'Sec-WebSocket-Version' => 13
-      unless first { lc($_) eq 'sec-websocket-version' } @{$self->{headers}};
-
     return (
-        method   => $self->{method},
-        resource => $self->{resource},
+        method   => $self->method,
+        resource => $self->resource,
         headers  => [@{$self->{headers}}]
     );
+}
+
+sub to_http_request {
+    my $self = shift;
+
+    my $path_query = $self->url->path_query;
+    $path_query = '/' . $path_query unless $path_query =~ m{^/};
+
+    my $req = HTTP::Request->new($self->method, $path_query, $self->headers);
+    $req->protocol('HTTP/1.1');
+
+    return $req;
+}
+
+sub to_string {
+    my $self = shift;
+
+    return $self->to_http_request->as_string("\r\n");
 }
 
 sub new_response {
     my $self = shift;
 
-    return Protocol::WebSocket2::Handshake::Response->new(key => $self->{key});
+    return Protocol::WebSocket2::Handshake::Response->new(
+        key     => $self->{key},
+        version => $self->{version}
+    );
+}
+
+sub _generate_key {
+    my $self = shift;
+
+    my $key = '';
+    $key .= chr(int(rand(256))) for 1 .. 16;
+
+    $key = MIME::Base64::encode_base64($key);
+    $key =~ s{\s+}{}g;
+
+    return $key;
 }
 
 1;

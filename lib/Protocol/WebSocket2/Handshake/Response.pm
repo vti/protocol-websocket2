@@ -6,88 +6,112 @@ use warnings;
 use Carp qw(croak);
 use Digest::SHA  ();
 use MIME::Base64 ();
-use List::Util qw(first);
+use HTTP::Response;
+use Protocol::WebSocket2::Util
+  qw(header_get header_get_lc dispatch_legacy is_legacy);
 
 sub new {
     my $class = shift;
     my (%params) = @_;
 
+    return dispatch_legacy(@_) if is_legacy($params{version});
+
     my $self = {};
     bless $self, $class;
 
-    $self->{key} = $params{key} || croak 'request key is required';
+    $self->{version} = $params{version} || 'rfc6455';
+    $self->{key}     = $params{key}     || croak 'request key is required';
 
-    $self->{code}    = $params{code}    || 101;
-    $self->{message} = $params{message} || 'Switching Protocols';
+    $self->{code}    = 101;
+    $self->{message} = 'Switching Protocols';
+
     $self->{headers} = [@{$params{headers} || []}];
+
+    if (!@{$self->{headers}}) {
+        $self->{headers} = [
+            'Upgrade'              => 'WebSocket',
+            'Connection'           => 'Upgrade',
+            'Sec-WebSocket-Accept' => $self->_generate_accept($self->{key}),
+        ];
+    }
 
     return $self;
 }
 
+sub version { $_[0]->{version} }
+sub code    { $_[0]->{code} }
+sub message { $_[0]->{message} }
+sub headers { $_[0]->{headers} }
+
 sub from_params {
-    my $self = shift;
+    my $class = shift;
     my (%params) = @_;
 
-    return unless $params{code} && $params{code} eq 101;
-
-    $self->{headers} = [@{$params{headers} || []}];
-
-    my %headers;
-    while (my ($key, $value) = splice(@{$params{headers}}, 0, 2)) {
-        $headers{lc($key)} = $value if first { lc($key) eq $_ } qw/
-          upgrade
-          connection
-          sec-websocket-accept
-          /;
+    if ($params{code} && $params{code} ne '101') {
+        croak 'Invalid code';
     }
 
-    return unless $headers{upgrade} && lc($headers{upgrade}) eq 'websocket';
-    return
-      unless $headers{connection} && first { lc($_) eq 'upgrade' }
-    split /\s*,\s*/, $headers{connection};
+    my $headers = [@{$params{headers} || []}];
 
-    return unless my $accept = $headers{'sec-websocket-accept'};
+    croak 'Upgrade header missing or invalid'
+      unless header_get_lc($headers, 'Upgrade') eq 'websocket';
+    croak 'Connection header missing or invalid'
+      unless header_get_lc($headers, 'Connection') eq 'upgrade';
 
-    return unless $self->_generate_accept($self->{key}) eq $accept;
+    croak 'request key required' unless $params{key};
+    croak 'Sec-WebSocket-Accept header missing or invalid'
+      unless header_get($headers, 'Sec-WebSocket-Accept') eq
+      $class->_generate_accept($params{key});
 
-    return $self;
+    return $class->new(key => $params{key}, headers => $headers);
 }
 
 sub to_params {
     my $self = shift;
 
-    my $key = $self->_generate_accept($self->{key});
-
-    push @{$self->{headers}}, 'Upgrade' => 'WebSocket'
-      unless first { lc($_) eq 'upgrade' } @{$self->{headers}};
-    push @{$self->{headers}}, 'Connection' => 'Upgrade'
-      unless first { lc($_) eq 'connection' } @{$self->{headers}};
-    push @{$self->{headers}}, 'Sec-WebSocket-Accept' => $key
-      unless first { lc($_) eq 'sec-websocket-accept' } @{$self->{headers}};
-
     return (
-        code    => $self->{code},
-        message => $self->{message},
-        headers => [@{$self->{headers}}]
+        code    => $self->code,
+        message => $self->message,
+        headers => $self->headers
     );
 }
 
 sub to_http_response {
     my $self = shift;
 
-    my %params = $self->to_params;
+    return HTTP::Response->new($self->code, $self->message, $self->headers);
+}
 
-    return
-      HTTP::Response->new($params{code}, $params{message},
-        $params{headers});
+sub from_http_response {
+    my $class = shift;
+    my ($res, %params) = @_;
+
+    croak 'request key required' unless $params{key};
+
+    my @headers =
+      map { $_ => $res->headers->header($_) } $res->headers->header_field_names;
+
+    return $class->from_params(
+        key => $params{key},
+        code => $res->code,
+        message  => $res->message,
+        headers => \@headers,
+    );
 }
 
 sub to_psgi {
     my $self = shift;
 
-    my %params = $self->to_params;
+    return [$self->code, $self->headers, []];
+}
 
-    return [$params{code}, $params{headers}, []];
+sub to_string {
+    my $self = shift;
+
+    my $res = $self->to_http_response;
+    $res->protocol('HTTP/1.1');
+
+    return $res->as_string("\r\n");
 }
 
 sub _generate_accept {
