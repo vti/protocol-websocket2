@@ -92,9 +92,9 @@ sub from_http_response {
       map { $_ => $res->headers->header($_) } $res->headers->header_field_names;
 
     return $class->from_params(
-        key => $params{key},
-        code => $res->code,
-        message  => $res->message,
+        key     => $params{key},
+        code    => $res->code,
+        message => $res->message,
         headers => \@headers,
     );
 }
